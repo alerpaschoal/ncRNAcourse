@@ -1,0 +1,77 @@
+# Obter datasets
+
+wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_41/gencode.v41.lncRNA_transcripts.fa.gz
+wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_41/gencode.v41.pc_transcripts.fa.gz
+gunzip -k gencode.v41.lncRNA_transcripts.fa.gz
+gunzip -k gencode.v41.pc_transcripts.fa.gz
+
+# Amostragem dos datasets
+
+seqtk sample -s22 gencode.v41.lncRNA_transcripts.fa 50 > lncRNA_samples.fa
+seqtk sample -s22 gencode.v41.pc_transcripts.fa 50 > pc_samples.fa
+
+# Preparar e mesclar amostras
+
+seqkit replace -w 0 -p "(.+)" -r "lncRNA#\$1" lncRNA_samples.fa > lncRNA_samples1.fa
+seqkit replace -w 0 -p "(.+)" -r "pc#\$1" pc_samples.fa > pc_samples1.fa
+cat lncRNA_samples1.fa pc_samples1.fa > samples.fa
+
+# Contar sequências
+
+grep ">" lncRNA_samples.fa | wc -l
+grep ">" pc_samples.fa | wc -l
+grep ">" samples.fa | wc -l
+
+# Downloading the docker image and installing.
+
+docker pull lopesandrecosta/rnaplonc
+
+# Enter to database folder
+
+cd YOUR_FODER_WITH_FASTA
+
+# 3.2 - 200nt.pl (Optional)
+
+sudo docker run -it --rm -v "$(pwd):/app" --user $(id -u):$(id -g) lopesandrecosta/rnaplonc perl RNAplonc/200nt.pl app/samples.fa
+
+# 3.3 - CD-HIT-EST (Optional)
+
+sudo docker run -it --rm \
+-v "$(pwd):/app" \
+--user $(id -u):$(id -g) \
+lopesandrecosta/rnaplonc RNAplonc/cd-hit-est \
+-i app/samples_.fasta -o app/cd_hit_est_result.fasta -c 0.8
+
+# 3.4 txCdsPredict (Mandatory)
+
+sudo docker run -it --rm \
+-v "$(pwd):/app" \
+--user $(id -u):$(id -g) \
+lopesandrecosta/rnaplonc RNAplonc/txCdsPredict \
+app/cd_hit_est_result.fasta app/tx_cds_result.cds
+
+# 3.5 feature_extraction.pl (Mandatory)
+
+sudo docker run -it --rm \
+-v "$(pwd):/app" \
+--user $(id -u):$(id -g) \
+lopesandrecosta/rnaplonc perl RNAplonc/feature_extraction.pl \
+app/cd_hit_est_result.fasta app/tx_cds_result.cds > features.arff
+
+# 3.6 RNAplonc.model execution on weka (Mandatory)
+
+sudo docker run -it --rm \
+-v "$(pwd):/app" \
+--user $(id -u):$(id -g) \
+lopesandrecosta/rnaplonc java -cp RNAplonc/weka.jar weka.classifiers.trees.REPTree \
+-l RNAplonc/RNAplonc.model -T app/features.arff \
+-p 0 > classification_result.txt
+
+# 3.7 Python Script to put back the sequence names back into the final result (Optional)
+
+sudo docker run -it --rm \
+-v "$(pwd):/app" \
+--user $(id -u):$(id -g) \
+lopesandrecosta/rnaplonc python3 RNAplonc/FilterResults.py \
+-c app/tx_cds_result.cds -r app/classification_result.txt \
+-o app/final_result.txt
